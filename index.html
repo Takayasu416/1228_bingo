@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>BINGO for iPad (Local Sound)</title>
+    <style>
+        :root {
+            --bg-color: #1a1a1a;
+            --card-bg: #ffffff;
+            --primary-color: #e74c3c;
+            --quiz-color: #f1c40f;
+            --undo-color: #95a5a6;
+        }
+
+        body {
+            font-family: 'Avenir', 'Helvetica Neue', Arial, sans-serif;
+            text-align: center;
+            background-color: var(--bg-color);
+            margin: 0; padding: 0; overflow: hidden;
+            height: 100vh; display: flex; flex-direction: column;
+        }
+
+        .main-display {
+            flex: 1; display: flex; flex-direction: column;
+            justify-content: center; align-items: center; padding: 20px;
+        }
+
+        #display {
+            font-size: 40vh; font-weight: 900; color: var(--primary-color);
+            background: var(--card-bg); width: 85%; height: 55vh;
+            display: flex; align-items: center; justify-content: center;
+            border-radius: 30px; box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+            transition: all 0.2s ease-out; margin-bottom: 30px;
+        }
+
+        #display.quiz-mode {
+            color: var(--quiz-color); background-color: #2c3e50;
+            box-shadow: 0 0 80px var(--quiz-color); transform: scale(1.05);
+        }
+
+        .controls { display: flex; gap: 20px; align-items: center; }
+
+        .btn-spin {
+            padding: 25px 100px; font-size: 40px; font-weight: bold;
+            cursor: pointer; background-color: #3498db; color: white;
+            border: none; border-radius: 100px; box-shadow: 0 8px 0 #2980b9;
+            transition: 0.1s;
+        }
+
+        .btn-spin:active { transform: translateY(4px); box-shadow: 0 4px 0 #2980b9; }
+
+        .btn-undo {
+            padding: 15px 30px; font-size: 20px; font-weight: bold;
+            cursor: pointer; background-color: var(--undo-color); color: white;
+            border: none; border-radius: 15px; box-shadow: 0 5px 0 #7f8c8d;
+        }
+
+        button:disabled { background-color: #555 !important; box-shadow: 0 4px 0 #333 !important; color: #888 !important; }
+
+        .history-section {
+            background: rgba(255, 255, 255, 0.1); padding: 15px;
+            height: 80px; overflow-x: auto; white-space: nowrap; border-top: 1px solid #444;
+        }
+
+        #history { display: inline-flex; gap: 15px; margin: 0; padding: 0; list-style: none; }
+
+        .history-item {
+            background: #eee; color: #333; min-width: 50px; height: 50px;
+            line-height: 50px; font-size: 24px; font-weight: bold;
+            border-radius: 10px; text-align: center; padding: 0 10px;
+        }
+
+        .history-item.quiz { background: var(--quiz-color); color: #000; }
+        .reset-link { position: absolute; top: 10px; right: 20px; color: #666; text-decoration: none; font-size: 14px; }
+    </style>
+</head>
+<body>
+
+    <a href="#" class="reset-link" onclick="resetBingo()">Reset All</a>
+
+    <div class="main-display">
+        <div id="display">?</div>
+        
+        <div class="controls">
+            <button id="undoBtn" class="btn-undo" onclick="undo()">一つ戻す</button>
+            <button id="spinBtn" class="btn-spin" onclick="spin()">SPIN!</button>
+        </div>
+    </div>
+
+    <div class="history-section">
+        <ul id="history"></ul>
+    </div>
+
+    <audio id="sound-spin" src="sound/drum-roll.mp3" preload="auto"></audio>
+    <audio id="sound-stop" src="sound/jan.mp3" preload="auto"></audio>
+    <audio id="sound-quiz" src="sound/quiz_start.mp3" preload="auto"></audio>
+
+<script>
+    const min = 1;
+    const max = 75;
+    const QUIZ_PROBABILITY = 0.15; 
+    const SPIN_DURATION = 3500;
+    const SPIN_SPEED = 40;
+
+    let remainingNumbers = Array.from({length: max - min + 1}, (_, i) => i + min);
+    let historyData = [];
+    let isSpinning = false;
+
+    const display = document.getElementById('display');
+    const spinBtn = document.getElementById('spinBtn');
+    const undoBtn = document.getElementById('undoBtn');
+    const historyList = document.getElementById('history');
+    
+    const soundSpin = document.getElementById('sound-spin');
+    const soundStop = document.getElementById('sound-stop');
+    const soundQuiz = document.getElementById('sound-quiz');
+
+    // iPad等でのサウンド初期読み込み対策
+    document.body.addEventListener('touchstart', () => {
+        soundSpin.load(); soundStop.load(); soundQuiz.load();
+    }, { once: true });
+
+    function spin() {
+        if (isSpinning || remainingNumbers.length === 0) return;
+
+        isSpinning = true;
+        spinBtn.disabled = true;
+        undoBtn.disabled = true;
+        display.classList.remove('quiz-mode');
+        
+        soundSpin.currentTime = 0;
+        soundSpin.loop = true;
+        soundSpin.play().catch(e => console.log("再生失敗:", e));
+
+        const startTime = Date.now();
+
+        function updateRoulette() {
+            const elapsed = Date.now() - startTime;
+            // 演出中の数字表示
+            display.innerText = Math.random() < 0.1 ? "Q" : Math.floor(Math.random() * max) + 1;
+
+            if (elapsed < SPIN_DURATION) {
+                const currentInterval = SPIN_SPEED + (elapsed / SPIN_DURATION) * 200;
+                setTimeout(updateRoulette, currentInterval);
+            } else {
+                soundSpin.pause();
+                soundSpin.loop = false;
+                determineResult();
+            }
+        }
+        updateRoulette();
+    }
+
+    function determineResult() {
+        let result;
+        const lastResult = historyData[historyData.length - 1];
+        const canQuiz = lastResult !== "Q"; 
+        
+        if (canQuiz && Math.random() < QUIZ_PROBABILITY) {
+            result = "Q";
+            display.innerText = "Q";
+            display.classList.add('quiz-mode');
+            soundQuiz.currentTime = 0;
+            soundQuiz.play();
+        } else {
+            const randomIndex = Math.floor(Math.random() * remainingNumbers.length);
+            result = remainingNumbers.splice(randomIndex, 1)[0];
+            display.innerText = result;
+            soundStop.currentTime = 0;
+            soundStop.play();
+        }
+
+        historyData.push(result);
+        updateHistoryUI();
+        isSpinning = false;
+        undoBtn.disabled = false;
+        spinBtn.disabled = remainingNumbers.length === 0;
+        if (remainingNumbers.length === 0) spinBtn.innerText = "FINISH";
+    }
+
+    function undo() {
+        if (historyData.length === 0 || isSpinning) return;
+        if (!confirm("直前の結果を取り消しますか？")) return;
+
+        const lastResult = historyData.pop();
+        if (lastResult !== "Q") {
+            remainingNumbers.push(lastResult);
+            remainingNumbers.sort((a, b) => a - b);
+        }
+
+        if (historyData.length > 0) {
+            const prev = historyData[historyData.length - 1];
+            display.innerText = prev;
+            prev === "Q" ? display.classList.add('quiz-mode') : display.classList.remove('quiz-mode');
+        } else {
+            display.innerText = "?";
+            display.classList.remove('quiz-mode');
+        }
+
+        updateHistoryUI();
+        spinBtn.disabled = false;
+        spinBtn.innerText = "SPIN!";
+    }
+
+    function updateHistoryUI() {
+        historyList.innerHTML = "";
+        [...historyData].reverse().forEach(item => {
+            const li = document.createElement('li');
+            li.className = 'history-item';
+            li.innerText = item;
+            if (item === "Q") li.classList.add('quiz');
+            historyList.appendChild(li);
+        });
+    }
+
+    function resetBingo() {
+        if (!confirm("全てをリセットしますか？")) return;
+        remainingNumbers = Array.from({length: max - min + 1}, (_, i) => i + min);
+        historyData = [];
+        display.innerText = "?";
+        display.classList.remove('quiz-mode');
+        updateHistoryUI();
+        spinBtn.disabled = false;
+        spinBtn.innerText = "SPIN!";
+    }
+</script>
+
+</body>
+</html>
