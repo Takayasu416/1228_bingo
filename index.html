@@ -97,135 +97,160 @@
     <audio id="sound-quiz" src="sound/quiz_start.mp3" preload="auto"></audio>
 
 <script>
-    const min = 1;
-    const max = 75;
-    const QUIZ_PROBABILITY = 0.25; 
-    const SPIN_DURATION = 3500;
-    const SPIN_SPEED = 40;
+// --- 【カスタマイズ設定】 ---
+const min = 1;
+const max = 75;
+const QUIZ_PROBABILITY = 0.2; // クイズが出る基本確率
+const QUIZ_LIMIT = 6;         // Qが出る合計最大回数
+const QUIZ_INTERVAL = 3;      // 一度Qが出た後、次にQが出るまでの最低回数（数字が3回続く）
+const SPIN_DURATION = 3500;    // 抽選時間（3.5秒）
+const SPIN_SPEED = 40;         // 初期速度
+// -------------------------
 
-    let remainingNumbers = Array.from({length: max - min + 1}, (_, i) => i + min);
-    let historyData = [];
-    let isSpinning = false;
+let remainingNumbers = Array.from({length: max - min + 1}, (_, i) => i + min);
+let historyData = [];
+let isSpinning = false;
+let quizCount = 0;             // これまでにQが出た回数
+let lastQuizIndex = -999;      // 最後にQが出たのが何回目の抽選か（初期値は十分小さい数）
 
-    const display = document.getElementById('display');
-    const spinBtn = document.getElementById('spinBtn');
-    const undoBtn = document.getElementById('undoBtn');
-    const historyList = document.getElementById('history');
+const display = document.getElementById('display');
+const spinBtn = document.getElementById('spinBtn');
+const undoBtn = document.getElementById('undoBtn');
+const historyList = document.getElementById('history');
+
+const soundSpin = document.getElementById('sound-spin');
+const soundStop = document.getElementById('sound-stop');
+const soundQuiz = document.getElementById('sound-quiz');
+
+// iPad等でのサウンド初期読み込み対策
+document.body.addEventListener('touchstart', () => {
+    soundSpin.load(); soundStop.load(); soundQuiz.load();
+}, { once: true });
+
+function spin() {
+    if (isSpinning || remainingNumbers.length === 0) return;
+
+    isSpinning = true;
+    spinBtn.disabled = true;
+    undoBtn.disabled = true;
+    display.classList.remove('quiz-mode');
     
-    const soundSpin = document.getElementById('sound-spin');
-    const soundStop = document.getElementById('sound-stop');
-    const soundQuiz = document.getElementById('sound-quiz');
+    soundSpin.currentTime = 0;
+    soundSpin.loop = true;
+    soundSpin.play().catch(e => console.log("再生失敗:", e));
 
-    // iPad等でのサウンド初期読み込み対策
-    document.body.addEventListener('touchstart', () => {
-        soundSpin.load(); soundStop.load(); soundQuiz.load();
-    }, { once: true });
+    const startTime = Date.now();
 
-    function spin() {
-        if (isSpinning || remainingNumbers.length === 0) return;
+    function updateRoulette() {
+        const elapsed = Date.now() - startTime;
+        // 演出中のランダム表示
+        display.innerText = Math.random() < 0.1 ? "Q" : Math.floor(Math.random() * max) + 1;
 
-        isSpinning = true;
-        spinBtn.disabled = true;
-        undoBtn.disabled = true;
-        display.classList.remove('quiz-mode');
-        
-        soundSpin.currentTime = 0;
-        soundSpin.loop = true;
-        soundSpin.play().catch(e => console.log("再生失敗:", e));
-
-        const startTime = Date.now();
-
-        function updateRoulette() {
-            const elapsed = Date.now() - startTime;
-            // 演出中の数字表示
-            display.innerText = Math.random() < 0.1 ? "Q" : Math.floor(Math.random() * max) + 1;
-
-            if (elapsed < SPIN_DURATION) {
-                const currentInterval = SPIN_SPEED + (elapsed / SPIN_DURATION) * 200;
-                setTimeout(updateRoulette, currentInterval);
-            } else {
-                soundSpin.pause();
-                soundSpin.loop = false;
-                determineResult();
-            }
-        }
-        updateRoulette();
-    }
-
-    function determineResult() {
-        let result;
-        const lastResult = historyData[historyData.length - 1];
-        const canQuiz = lastResult !== "Q"; 
-        
-        if (canQuiz && Math.random() < QUIZ_PROBABILITY) {
-            result = "Q";
-            display.innerText = "Q";
-            display.classList.add('quiz-mode');
-            soundQuiz.currentTime = 0;
-            soundQuiz.play();
+        if (elapsed < SPIN_DURATION) {
+            const currentInterval = SPIN_SPEED + (elapsed / SPIN_DURATION) * 200;
+            setTimeout(updateRoulette, currentInterval);
         } else {
-            const randomIndex = Math.floor(Math.random() * remainingNumbers.length);
-            result = remainingNumbers.splice(randomIndex, 1)[0];
-            display.innerText = result;
-            soundStop.currentTime = 0;
-            soundStop.play();
+            soundSpin.pause();
+            soundSpin.loop = false;
+            determineResult();
         }
+    }
+    updateRoulette();
+}
 
-        historyData.push(result);
-        updateHistoryUI();
-        isSpinning = false;
-        undoBtn.disabled = false;
-        spinBtn.disabled = remainingNumbers.length === 0;
-        if (remainingNumbers.length === 0) spinBtn.innerText = "FINISH";
+function determineResult() {
+    let result;
+    const currentTurn = historyData.length; // 現在が何回目の抽選か
+    
+    // 【新ロジック】Qが出るための条件チェック
+    // 1. 合計回数が上限以下か
+    // 2. 前回のQから指定の間隔が空いているか
+    const canQuiz = (quizCount < QUIZ_LIMIT) && (currentTurn >= lastQuizIndex + QUIZ_INTERVAL + 1);
+    
+    if (canQuiz && Math.random() < QUIZ_PROBABILITY) {
+        result = "Q";
+        display.innerText = "Q";
+        display.classList.add('quiz-mode');
+        soundQuiz.currentTime = 0;
+        soundQuiz.play();
+        
+        // Qの状態を更新
+        quizCount++;
+        lastQuizIndex = currentTurn;
+    } else {
+        const randomIndex = Math.floor(Math.random() * remainingNumbers.length);
+        result = remainingNumbers.splice(randomIndex, 1)[0];
+        display.innerText = result;
+        soundStop.currentTime = 0;
+        soundStop.play();
     }
 
-    function undo() {
-        if (historyData.length === 0 || isSpinning) return;
-        if (!confirm("直前の結果を取り消しますか？")) return;
+    historyData.push(result);
+    updateHistoryUI();
+    isSpinning = false;
+    undoBtn.disabled = false;
+    spinBtn.disabled = remainingNumbers.length === 0;
+    if (remainingNumbers.length === 0) spinBtn.innerText = "FINISH";
+}
 
-        const lastResult = historyData.pop();
-        if (lastResult !== "Q") {
-            remainingNumbers.push(lastResult);
-            remainingNumbers.sort((a, b) => a - b);
+function undo() {
+    if (historyData.length === 0 || isSpinning) return;
+    if (!confirm("直前の結果を取り消しますか？")) return;
+
+    const lastResult = historyData.pop();
+    if (lastResult === "Q") {
+        // 取り消したのがQだった場合、カウントを戻す
+        quizCount--;
+        // 以前のQの位置を特定し直す（履歴を遡る）
+        lastQuizIndex = -999;
+        for (let i = 0; i < historyData.length; i++) {
+            if (historyData[i] === "Q") lastQuizIndex = i;
         }
-
-        if (historyData.length > 0) {
-            const prev = historyData[historyData.length - 1];
-            display.innerText = prev;
-            prev === "Q" ? display.classList.add('quiz-mode') : display.classList.remove('quiz-mode');
-        } else {
-            display.innerText = "?";
-            display.classList.remove('quiz-mode');
-        }
-
-        updateHistoryUI();
-        spinBtn.disabled = false;
-        spinBtn.innerText = "SPIN!";
+    } else {
+        remainingNumbers.push(lastResult);
+        remainingNumbers.sort((a, b) => a - b);
     }
 
-    function updateHistoryUI() {
-        historyList.innerHTML = "";
-        [...historyData].reverse().forEach(item => {
-            const li = document.createElement('li');
-            li.className = 'history-item';
-            li.innerText = item;
-            if (item === "Q") li.classList.add('quiz');
-            historyList.appendChild(li);
-        });
-    }
-
-    function resetBingo() {
-        if (!confirm("全てをリセットしますか？")) return;
-        remainingNumbers = Array.from({length: max - min + 1}, (_, i) => i + min);
-        historyData = [];
+    if (historyData.length > 0) {
+        const prev = historyData[historyData.length - 1];
+        display.innerText = prev;
+        prev === "Q" ? display.classList.add('quiz-mode') : display.classList.remove('quiz-mode');
+    } else {
         display.innerText = "?";
         display.classList.remove('quiz-mode');
-        updateHistoryUI();
-        spinBtn.disabled = false;
-        spinBtn.innerText = "SPIN!";
     }
+
+    updateHistoryUI();
+    spinBtn.disabled = false;
+    spinBtn.innerText = "SPIN!";
+}
+
+function updateHistoryUI() {
+    historyList.innerHTML = "";
+    [...historyData].reverse().forEach(item => {
+        const li = document.createElement('li');
+        li.className = 'history-item';
+        li.innerText = item;
+        if (item === "Q") li.classList.add('quiz');
+        historyList.appendChild(li);
+    });
+}
+
+function resetBingo() {
+    if (!confirm("全てをリセットしますか？")) return;
+    remainingNumbers = Array.from({length: max - min + 1}, (_, i) => i + min);
+    historyData = [];
+    quizCount = 0;
+    lastQuizIndex = -999;
+    display.innerText = "?";
+    display.classList.remove('quiz-mode');
+    updateHistoryUI();
+    spinBtn.disabled = false;
+    spinBtn.innerText = "SPIN!";
+}
 </script>
 
 </body>
 
 </html>
+
